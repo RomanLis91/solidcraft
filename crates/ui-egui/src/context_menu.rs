@@ -227,10 +227,14 @@ pub struct MenuState {
     pub rename: Option<Rename>,
     /// A delete waiting for its confirmation (it takes or breaks other features).
     pub confirm: Option<crate::delete::Pending>,
+    /// A selected part has no free joint value for the explicit assembly Move command.
+    pub joint_move_warning: Option<String>,
     /// Identical copies Extract to File found, waiting to be linked too.
     pub link_copies: Option<crate::linked_source::Copies>,
     /// The Properties window: title and measurements.
     pub props: Option<(String, Value)>,
+    /// Its measurement while it runs beside the window (#5203).
+    pub props_measuring: Option<crate::design_properties::Measuring>,
     /// The viewport menu opened over something: it offers Select Other.
     pub over_geometry: bool,
     /// The plane under the cursor when the viewport menu opened: it offers a sketch on it.
@@ -605,6 +609,9 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(cmd(app, "solid.extrude", "Extrude"));
         v.push(cmd(app, "construct.plane.offset", "Offset Plane"));
         v.push(cmd(app, "solid.shell", "Shell"));
+        if crate::joint_handles::selected_occurrence(app).is_some() {
+            v.push(cmd(app, "occurrence.move", "Move"));
+        }
         v.push(act("ui.editFeature", "Edit Feature", "edit").with(json!({ "feature": feature })).on(feature.is_some()));
         v.push(act("ui.editSketch", "Edit Profile Sketch", "sketch").with(json!({ "sketch": sketch })).on(sketch.is_some()));
         let planar =
@@ -1381,16 +1388,8 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                 "inspect.measure"
             };
             let params = if command == "inspect.measure" { json!({ "bodies": bodies }) } else { p.clone() };
-            match app.session.execute(command, &params) {
-                Ok(v) => {
-                    let title = v["name"]
-                        .as_str()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| if bodies.len() == 1 { bodies.join("") } else { format!("{} bodies", bodies.len()) });
-                    app.menu.props = Some((title, v));
-                }
-                Err(e) => app.set_status(e.to_string(), true),
-            }
+            let fallback = if bodies.len() == 1 { bodies.join("") } else { format!("{} bodies", bodies.len()) };
+            crate::design_properties::open_object(app, command, &params, fallback);
         }
         "ui.designProperties" => app.start("document.metadata"),
         "ui.export" => {
@@ -1497,6 +1496,9 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         }
         "ui.moveOccurrence" => {
             if let Some(o) = id_of(&p, "occurrence") {
+                if crate::joint_handles::begin(app, o) {
+                    return;
+                }
                 let mut movement = crate::browser::OccMove::new(o);
                 movement.had_pending = app.session.pending_moves.contains_key(&o);
                 movement.path = p.get("path").and_then(Value::as_array).map(|p| p.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
@@ -1513,7 +1515,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             let _ = app.run("browser.visibility", json!({"visible": true, "paths": [p["path"]], "isolate": true}));
         }
         "ui.canvasVisible" => drop(app.run("canvas.edit", p)),
-        "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.shortcutPin" => {
+        "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.toolbarTab" | "ui.shortcutPin" => {
             crate::toolbar_custom::run(app, &item.id, &p)
         }
         "ui.historyPlayButton" => {
@@ -1920,12 +1922,17 @@ pub fn open_for(app: &mut SolveApp, at: Pos2, target: Target) {
 
 /// A button's menu: a click opens it, and a click on the same button while it is open closes it.
 pub fn toggle_for(app: &mut SolveApp, opener: Rect, at: Pos2, target: Target) {
-    if app.viewport.context_menu.is_some() && app.menu.target == target && app.menu.opener == Some(opener) {
+    if open_from(app, opener, &target) {
         close(app);
     } else {
         open_for(app, at, target);
         app.menu.opener = Some(opener);
     }
+}
+
+/// The button's menu is open, so the button can show it pressed.
+pub fn open_from(app: &SolveApp, opener: Rect, target: &Target) -> bool {
+    app.viewport.context_menu.is_some() && app.menu.target == *target && app.menu.opener == Some(opener)
 }
 
 pub fn close(app: &mut SolveApp) {

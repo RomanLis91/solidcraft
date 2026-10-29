@@ -45,6 +45,18 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     app.preferences.viewport_theme = *view;
                 }
             });
+            // The view's background: the theme's gradient, or one colour of the user's (#7688).
+            let label = app.tr("prefs.viewport_background");
+            ui_kit::row(ui, label, |ui| {
+                let labels = [crate::i18n::tr("prefs.viewport_background_theme"), crate::i18n::tr("prefs.viewport_background_colour")];
+                let mut selected = usize::from(app.preferences.viewport_background.is_some());
+                if ui_kit::settings_segments(ui, label, &mut selected, &labels) {
+                    app.preferences.viewport_background = (selected == 1).then_some([255, 255, 255]);
+                }
+                if let Some(colour) = &mut app.preferences.viewport_background {
+                    ui_kit::color_field(ui, colour);
+                }
+            });
             // The logo in the theme's own logo colours or in its accent.
             let label = app.tr("prefs.logo");
             ui_kit::row(ui, label, |ui| {
@@ -248,6 +260,17 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     });
     origin_plane_names(app, ui);
     super::navbar::show(app, ui);
+    // The same choice as the toolbar's own menu (the plus after the tabs, or right-click a tab).
+    ui_kit::settings_section(ui, "toolbar_tabs", app.tr("prefs.toolbar_tabs"), |ui| {
+        for tab in crate::workspace::choosable_tabs() {
+            let mut on = crate::workspace::tab_turned_on(app, tab);
+            let response = ui_kit::checkbox(ui, &crate::toolbar::ribbon_label(app, tab), &mut on);
+            crate::scenario::publish_target(&format!("prefs:toolbar_tab:{tab}"), response.rect);
+            if response.changed() {
+                crate::workspace::set_tab_shown(app, tab, on);
+            }
+        }
+    });
     ui_kit::settings_section(ui, "scale", app.tr("prefs.scale_text"), |ui| {
         ui_kit::settings_pair(
             ui,

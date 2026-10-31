@@ -1139,3 +1139,71 @@ fn align_components_picks_the_placement_under_the_active_component_and_warns_whe
     h.frames(4);
     assert!(h.widget(ALIGN_SHARED_WARNING).is_some(), "the shared pick is called out");
 }
+
+/// OK on the editor of a pattern behind the history marker leaves it rolled back, so the view
+/// does not change: the status line says why, where the edit used to look as if it had silently
+/// failed (#8100).
+#[test]
+fn ok_on_a_rolled_back_pattern_editor_says_it_is_not_built() {
+    let mut h = Harness::new();
+    h.app.home.open = false;
+    for (id, params) in [
+        ("solid.box", json!({"length":40,"width":30,"height":10,"corner":[0,0,0],"body_name":"Plate"})),
+        ("solid.cylinder", json!({"radius":2,"height":20,"base":[10,15,-5],"operation":"cut","targets":["Plate"],"name":"Cut"})),
+        ("solid.pattern.circular", json!({"features":["Cut"],"axis":{"origin":[20,15,0],"dir":[0,0,1]},"count":2,"name":"Pattern"})),
+        ("timeline.roll_to", json!({"position":2})),
+    ] {
+        h.app.run(id, params).unwrap();
+    }
+    let pattern = h.app.session.doc.features.last().unwrap().id;
+    h.app.edit_feature(pattern);
+    h.settle();
+    assert!(h.app.dialog.is_some(), "the pattern's editor opens");
+    h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
+    for _ in 0..500 {
+        if h.app.dialog.is_none() {
+            break;
+        }
+        h.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(h.app.dialog.is_none(), "the edit is applied");
+    assert_eq!(h.app.session.doc.marker, Some(2), "the pattern stays behind the marker");
+    let (text, _, error) = h.app.status.clone().unwrap();
+    assert!(!error, "{text}");
+    assert!(text.starts_with("Pattern changed, but it is after the history marker"), "{text}");
+}
+
+/// The Circular Pattern dialog must show only one field active at a time (#10066): the pick
+/// field's accent ring yields while a text field holds the keyboard, and clicking a pick field
+/// takes the keyboard back.
+#[test]
+fn circular_pattern_dialog_shows_one_active_field_at_a_time() {
+    let mut h = Harness::new();
+    h.app.home.open = false;
+    h.app.run("solid.box", json!({"length": 20, "width": 20, "height": 10})).unwrap();
+    let mut d = Dialog::for_command(&h.app, "solid.pattern.circular").unwrap();
+    d.inputs[1].items = vec![Sel::Axis { name: "Z".into() }];
+    h.app.dialog = Some(d);
+    h.settle();
+    let active = |label: &str| crate::scenario::count_of(&format!("dialog:selection:{label}:active")) == Some(1.0);
+    let keyboard = |h: &Harness| h.ctx.memory(|m| m.focused()).is_some();
+    let click_field = |h: &mut Harness, rect: &str| {
+        let at = crate::scenario::rect_of(rect).unwrap_or_else(|| panic!("{rect} is not drawn")).center();
+        h.step(&json!({"click": [at.x, at.y]})).unwrap();
+        h.frames(2);
+    };
+    // A fresh dialog: the Objects pick field is the one active field, no text field has the keyboard.
+    assert!(!keyboard(&h), "nothing holds the keyboard when the dialog opens");
+    assert_eq!((active("Objects"), active("Axis")), (true, false), "only Objects looks active");
+    // Clicking Quantity: the text field takes the keyboard and no pick field keeps its ring.
+    h.step(&json!({"click": {"handle": "dialog:Quantity"}})).unwrap();
+    h.frames(2);
+    assert!(keyboard(&h), "Quantity holds the keyboard");
+    assert_eq!((active("Objects"), active("Axis")), (false, false), "only the typed field looks active");
+    // Clicking the Axis pick field: it becomes the one active field and takes the keyboard back.
+    click_field(&mut h, "dialog:field:Axis");
+    assert!(!keyboard(&h), "the pick field takes the keyboard from Quantity");
+    assert_eq!((active("Objects"), active("Axis")), (false, true), "only Axis looks active");
+    assert_eq!(h.app.dialog.as_ref().unwrap().active, 1, "picks still go to Axis");
+}

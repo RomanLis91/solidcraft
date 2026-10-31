@@ -92,12 +92,14 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             app.tr("prefs.extra_navigation").to_owned()
         };
         ui_kit::text(ui, &help, ui_kit::Text::Hint("navigation"));
+        let stop = setting::zoom_stop_at_model(app, ui).on_hover_text(crate::i18n::tr("prefs.zoom_stop_at_model_tip"));
+        crate::scenario::publish_target("prefs:zoom_stop_at_model", stop.rect);
     });
     ui_kit::settings_section(ui, "orbit_pivot", app.tr_label("Orbit around"), |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = t.space_8;
             for (index, (mode, label)) in
-                [(OrbitAround::Origin, "Origin"), (OrbitAround::ViewCentre, "View centre"), (OrbitAround::Cursor, "prefs.under_cursor")]
+                [(OrbitAround::Origin, "Origin"), (OrbitAround::ViewCentre, "View center"), (OrbitAround::Cursor, "prefs.under_cursor")]
                     .into_iter()
                     .enumerate()
             {
@@ -163,6 +165,7 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         crate::scenario::publish_target("view:tool_cursor", cursor.rect);
         ui_kit::divider(ui, "navigation_view_controls");
         ui_kit::settings_form(ui, 150.0, |ui| {
+            setting::wheel_zoom_speed(app, ui);
             ui_kit::row(ui, app.tr_label("View navigator"), |ui| {
                 let mut selected = usize::from(app.preferences.navigator_style == NavigatorStyle::Cube);
                 if ui_kit::segmented(

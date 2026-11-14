@@ -2110,7 +2110,7 @@ impl<'target> FilletSession<'target> {
         // (not upstream, solidcore #2541) a lone round's solver takes the rims it may end
         // on before the corners trace it
         self.end_round_on_outline(k)?;
-        // (not upstream) a lone round rolls over its faces' smooth far edges, the whole length
+        // (not upstream) a round rolls over its faces' smooth far edges, the whole length
         self.roll_over_tangent_edges(k)?;
         let SessionObjects {
             target,
@@ -2320,7 +2320,6 @@ impl<'target> FilletSession<'target> {
                         &lookup,
                         crate::math::rad_to_deg(corner.tangency_tol_radians),
                         set_back_fills,
-                        false,
                     );
                     match classified {
                         Err(_) => {
@@ -2821,7 +2820,7 @@ impl<'target> FilletSession<'target> {
     /// (`blend_edges_stopping`, then `corners`), and the goldens runner's
     /// `setback_fillet_edges`. Where the corner is the Setback it takes the N x N
     /// corner's place, with its fill asked as [`Self::set_set_back_fill`] asks one; elsewhere
-    /// (beside a curved face, no setback set) it stays the N x N corner.
+    /// (a corner `classify_setback` does not take, no setback set) it stays the N x N corner.
     ///
     /// # Errors
     /// Those of the classification.
@@ -2879,7 +2878,6 @@ impl<'target> FilletSession<'target> {
                 &lookup,
                 crate::math::rad_to_deg(corner.tangency_tol_radians),
                 &asked,
-                true,
             )?;
             if class.event == crate::blend::blend_corner::BlendCornerEvent::Setback {
                 *corner = setback_corner_of(corner, class.order);
@@ -5406,6 +5404,18 @@ impl RailTrimAccess<FilletObject> for SessionObjects<'_> {
         solver.trim_rails_with(|geometry, actual_solver| {
             pseudo.trim_rail_curves_with_solver(k, geometry, id, actual_solver, target)
         })
+    }
+    fn rails_rolled_on_their_faces(
+        &mut self,
+        k: &mut Kernel,
+        solver: FilletObject,
+        executive: &mut FilletExecutive<FilletObject>,
+    ) -> Result<bool> {
+        let FilletObject::Solver(id) = solver else {
+            return Err(invalid("object is not a solver"));
+        };
+        let lone = executive.solvers.len() == 1;
+        self.rolled_rails_on_their_faces(k, id, lone)
     }
 }
 

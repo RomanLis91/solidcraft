@@ -17,7 +17,7 @@ use crate::schema::sketch_modify::{
     BreakParams, BreakResult, ChamferDistanceAngleParams, ChamferEqualParams, ChamferResult, ChamferTwoParams, CircularPatternParams, ExtendParams,
     ExtendResult, FilletParams, FilletResult, MAX_BREAK_POINTS, MAX_COPIES, MAX_INSTANCES, MAX_PATH_POINTS, MirrorParams, MirrorResult, MoveParams,
     MoveResult, OffsetBreakParams, OffsetBreakResult, OffsetParams, OffsetResult, OffsetSide, PatternResult, RectangularPatternParams, ScaleParams,
-    ScaleResult, TrimOutcome, TrimParams, TrimPathParams, TrimPathResult, TrimResult,
+    ScaleResult, TransformParams, TransformResult, TrimOutcome, TrimParams, TrimPathParams, TrimPathResult, TrimResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{Result, Session};
@@ -40,6 +40,7 @@ const OFFSET_BREAK_CONTRACT: TypedContract<OffsetBreakParams> = TypedContract::n
 const MIRROR_CONTRACT: TypedContract<MirrorParams> = TypedContract::new();
 const MOVE_CONTRACT: TypedContract<MoveParams> = TypedContract::new();
 const SCALE_CONTRACT: TypedContract<ScaleParams> = TypedContract::new();
+const TRANSFORM_CONTRACT: TypedContract<TransformParams> = TypedContract::new();
 const CIRCULAR_PATTERN_CONTRACT: TypedContract<CircularPatternParams> = TypedContract::new();
 const RECTANGULAR_PATTERN_CONTRACT: TypedContract<RectangularPatternParams> = TypedContract::new();
 
@@ -129,7 +130,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("sketch_scale")
         .enabled(in_sketch)
         .params("entities: [curve/point ids], base: [x,y] or point ref, factor: number; the driving length and radius dimensions wholly inside the selection scale too (a formula becomes `(formula) * factor`)"),
-    CommandSpec::new("sketch.transform", "Transform", transform)
+    CommandSpec::new("sketch.transform", "Transform", crate::checked!("sketch.transform", transform))
+        .contract(&TRANSFORM_CONTRACT)
+        .output(output_schema_for::<TransformResult>)
         .at("SKETCH", "MODIFY")
         .icon("sketch_move")
         .key("G")
@@ -3779,8 +3782,14 @@ fn pattern_rect(s: &mut Session, p: &Value) -> Result<Value> {
 /// Move the points of the entities (in place) through `f`; circle radii scale by `k`.
 fn transform_in_place(sk: &mut Sketch, cs: &[usize], ps: &[usize], f: &dyn Fn(Vec2) -> Vec2, k: f64, cmd: &str) -> Result<()> {
     let pts = involved_points(sk, cs, ps);
-    if pts.iter().any(|q| sk.points.get(*q).is_some_and(|x| x.fixed || x.link.is_some())) {
-        return Err(bad(cmd, "fixed or projected geometry cannot move"));
+    // A point the sketch holds fixed, or one it projects from a body or another sketch, follows
+    // its source: it cannot move by itself. The refusal names the point and says which of the
+    // two it is, so the user knows what to move instead (#16164).
+    if let Some((id, reason)) = pts.iter().find_map(|q| {
+        let x = sk.points.get(*q)?;
+        (x.fixed || x.link.is_some()).then(|| (x.id.as_str(), if x.link.is_some() { "projected" } else { "fixed" }))
+    }) {
+        return Err(bad(cmd, format!("point `{id}` is {reason} and cannot move")));
     }
     // A point the origin holds goes where the move takes it: the coincidence that held it
     // there is dropped (#5034).
@@ -4035,7 +4044,7 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(ids_of(sk, &cs))
     })?;
     s.doc_mut().prune_model_params();
-    Ok(json!({"curves": out, "sketch": info}))
+    reply(cmd, TransformResult { curves: out, sketch: info, param_warnings: Vec::new() })
 }
 
 /// The driving lengths wholly inside a transformed selection scale with it. Keep formulas
